@@ -30,6 +30,7 @@ dependencies = [
     "teareduce",
     "numina",
     "cmap",
+    "reproject",
 ]
 
 [project.optional-dependencies]
