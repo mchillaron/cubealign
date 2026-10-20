@@ -1,0 +1,65 @@
+#
+# Copyright 2026 Universidad Complutense de Madrid
+#
+# This file is part of cubealign.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# License-Filename: LICENSE
+#
+
+
+# Cube alignment configuration
+cubes:
+  - id: LR_R
+    path: "data/megara_LR_R.fits"
+    wcs_ext: 0                            # "DATA"
+    line: "Halpha"
+    collapse:
+      min: 6555.0
+      max: 6570.0
+
+  - id: LR_B
+    path: "data/megara_LR_B.fits"
+    wcs_ext: 0
+    line: "Hbeta"
+    collapse:
+      min: 4855.0
+      max: 4868.0
+
+  - id: LR_U
+    path: "data/megara_LR_U.fits"
+    wcs_ext: 0
+    line: "Hdelta"
+    collapse:
+      min: 4095.0
+      max: 4108.0
+
+# Reference cube identifier
+ref_cube: LR_R
+
+# Optional fitted-line tables
+tables:
+  - cube_id: LR_R
+    path: "data/halpha_table.fits"
+
+  - cube_id: LR_B
+    path: "data/hbeta_table.fits"
+
+  - cube_id: LR_U
+    path: "data/hdelta_table.fits"
+
+# FITS binary table column names
+col_names:
+  x_coord: "x"
+  y_coord: "y"
+  line_flux: "area_trapz"
+
+
+# Optional external astrometry
+astrometry:
+  image: "data/sdss_r.fits"
+  image_ext: 0
+  label: "SDSS r-band"
+  cutout:
+    margin: 1.5
+    padding_arcsec: 5.0
