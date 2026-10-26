@@ -8,6 +8,7 @@
 #
 
 from matplotlib.lines import Line2D
+from matplotlib import patheffects
 from numina.tools.measure_xy_offset_2dimages import measure_xy_offset_2dimages
 from pathlib import Path
 
@@ -89,8 +90,74 @@ def plot_offset_comparison(reference, moving, results, cube_id, ref_id, pmin=1.0
     return fig if show else None
 
 
+def plot_final_alignment(images, aligned_images, cube_info, ref_id, cmap="plasma", pmin=1.0, pmax=99.5, normalized=False, filename=None):
+    """Plot the reference image with aligned emission-line contours."""
 
-def plot_final_alignment(images, aligned_images, cube_info, ref_id, cmap="magma_r", pmin=1.0, pmax=99.5):
+    if not logger.isEnabledFor(logging.INFO):
+        return
+
+    reference = images[ref_id]
+    finite = reference[np.isfinite(reference)]
+
+    if finite.size == 0:
+        raise ValueError("Reference image contains no finite pixels.")
+
+    vmin, vmax = np.percentile(finite, [pmin, pmax])
+
+    if vmin == vmax:
+        vmin, vmax = finite.min() - 0.5, finite.max() + 0.5
+
+    fig, ax = plt.subplots(figsize=(9, 8))
+    im = ax.imshow(reference, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+
+    colors = ["#00E5FF", "#8AFFC1", "#FFFFFF", "#FF6B6B", "#4DFFFF"]
+    linestyles = ["--", ":", "-.", "-"]
+    legend_elements = []
+
+    moving_cubes = [info for info in cube_info if info["id"] != ref_id]
+
+    for i, info in enumerate(moving_cubes):
+        cube_id = info["id"]
+        image = aligned_images[cube_id]
+        levels = get_contour_levels(image)
+
+        if len(levels) == 0:
+            logger.warning("%s: no valid contour levels.", cube_id)
+            continue
+
+        color = colors[i % len(colors)]
+        linestyle = linestyles[i % len(linestyles)]
+        label = f"{cube_id} - {info.get('line', 'Unknown')}"
+
+        contours = ax.contour(image, levels=levels, colors=[color], linewidths=1.8, linestyles=linestyle)
+
+        # Thin dark outline improves contrast against plasma
+        for collection in contours.get_children():
+            collection.set_path_effects([patheffects.Stroke(linewidth=2.7, foreground="black"), patheffects.Normal()])
+
+        legend_elements.append(Line2D([0], [0], color=color, linestyle=linestyle, linewidth=2.0, label=label))
+
+    if legend_elements:
+        ax.legend(handles=legend_elements, loc="best", fontsize=9, facecolor="#222222", labelcolor="white", framealpha=0.9)
+
+    ax.set_xlabel("X [pix]")
+    ax.set_ylabel("Y [pix]")
+
+    title = "Normalized emission-line registration" if normalized else "Final emission-line registration"
+    ax.set_title(f"{title} - Reference: {ref_id}")
+
+    label = "Normalized intensity" if normalized else "Reference image intensity"
+    add_top_colorbar(fig, ax, im, label=label)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+
+    if filename is None:
+        filename = "final_alignment_normalized.png" if normalized else "final_alignment_contours.png"
+
+    output_figure(fig, filename)
+
+
+def plot_final_alignment_old(images, aligned_images, cube_info, ref_id, cmap="magma_r", pmin=1.0, pmax=99.5):
     """Plot the reference image with contours from all aligned images."""
 
     reference = images[ref_id]

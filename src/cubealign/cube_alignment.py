@@ -15,7 +15,7 @@ from rich.logging import RichHandler
 
 import argparse
 import logging
-import matplotlib.pyplot as plt
+import numpy as np
 import sys
 import shlex
 import time
@@ -29,6 +29,7 @@ from .calculate_offset.calculate_offset_base import calculate_offset_base
 from .check_astrometry.check_astrometry_base import refine_reference_astrometry
 from .check_astrometry.plot_astrometry_images import plot_final_astrometry
 from .save_cubes.save_alignment_results import save_alignment_results
+from .numina_slice_offset import run_all_slice_offset_diagnostics
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -41,7 +42,8 @@ def measure_cube_alignment(config, method,
                             refine_astrometry,
                             choose_method,
                             history_line_command, 
-                            time_start):
+                            time_start, normalize=False, smooth_kernel=None, 
+                            slice_offset=False, slice_npoints=20, slice_method=1):
     
     """Measure relative spatial alignment of IFU datacubes."""
 
@@ -122,9 +124,24 @@ def measure_cube_alignment(config, method,
         raise ConfigurationError(f"Unknown alignment mode: {config['mode']}")
 
 
+    # Optional wavelength-dependent slice-offset diagnostic
+    slice_results = {}
+
+    if slice_offset:
+        logger.info("Starting wavelength-dependent slice-offset diagnostics.")
+        slice_results = run_all_slice_offset_diagnostics(
+            config, npoints=slice_npoints, method=slice_method,
+            plots=logger.isEnabledFor(logging.DEBUG)
+        )
+        logger.info("Slice-offset diagnostics completed.")
+
+
     # Offsets measurements
     logger.info("Relative cube alignment starts") 
-    reference_image, reference_wcs, alignment_results, offsets, aligned_images = calculate_offset_base(config, images, wcs_dict, method)
+    #reference_image, reference_wcs, alignment_results, offsets, aligned_images = calculate_offset_base(config, images, wcs_dict, method)
+    reference_image, reference_wcs, alignment_results, offsets, aligned_images = calculate_offset_base(
+        config, images, wcs_dict, method, normalize=normalize, smooth_kernel=smooth_kernel
+    )
     logger.info("Relative cube alignment completed.")
 
     # Optional external astrometric refinement
@@ -163,6 +180,7 @@ def measure_cube_alignment(config, method,
         "images": images,
         "reference_image": reference_image,
         "reference_wcs": reference_wcs,
+        "slice_diagnostics": slice_results,
         "alignment_results": alignment_results,
         "offsets": offsets,
         "aligned_images": aligned_images,
@@ -185,6 +203,11 @@ def main():
     parser.add_argument("--wcs-ext", type=str, default="0", help=("Default FITS extension containing the WCS, overridden by cube-specific wcs_ext values in the YAML."),)
     parser.add_argument('-m', '--method', type=str, choices=["m1", "m2", "both"], default="both", help=("Alignment method: m1, m2, or both. When both is selected, the user chooses the preferred solution interactively."),)
     parser.add_argument("--refine-astrometry", action="store_true", default=False, help=("Refine the absolute astrometry using an external reference FITS image specified in the YAML file."),)
+    parser.add_argument("--normalize", action="store_true", help="Normalize each alignment image by its maximum finite intensity before measuring offsets.")
+    parser.add_argument("--smooth-kernel", type=float, default=None, metavar="SIGMA", help="Apply Gaussian smoothing to alignment images using the specified sigma in pixels.")
+    parser.add_argument("--slice-offset", action="store_true", help="Diagnose wavelength-dependent spatial offsets within each input cube.")
+    parser.add_argument("--slice-npoints", type=int, default=10, help="Number of spectral sampling points for the Numina slice-offset diagnostic.")
+    parser.add_argument("--slice-method", type=int, choices=[1, 2], default=1, help="Numina slice-offset diagnostic method: 1=skimage, 2=scipy.")
     parser.add_argument("--log-level", type=str.upper, choices=["DEBUG","INFO","WARNING","ERROR","CRITICAL",],default="INFO",help="Logging verbosity level.",)
 
     args = parser.parse_args()
@@ -220,6 +243,13 @@ def main():
     history_line_command = shlex.join(sys.argv)
     logger.debug("Executed command: %s", history_line_command,)
 
+    # protections for smooth kernel and slice offsets
+    if args.smooth_kernel is not None and (not np.isfinite(args.smooth_kernel) or args.smooth_kernel <= 0):
+        parser.error("--smooth-kernel requires a finite positive sigma.")
+
+    if args.slice_npoints < 2:
+        parser.error("--slice-npoints must be at least 2.")
+
     # Load and validate configuration
     try:
         config = load_config(args.config, fits_ext(args.wcs_ext), args.refine_astrometry,)
@@ -237,7 +267,9 @@ def main():
                                method=args.method, 
                                refine_astrometry=args.refine_astrometry,
                                choose_method=(choose_method if args.method == "both" else None),
-                               history_line_command=history_line_command, time_start=start)
+                               history_line_command=history_line_command, time_start=start,
+                               normalize=args.normalize, smooth_kernel=args.smooth_kernel,
+                               slice_offset=args.slice_offset, slice_npoints=args.slice_npoints, slice_method=args.slice_method)
 
         logger.info("Cube alignment completed successfully.")
         return 0
