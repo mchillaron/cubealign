@@ -22,38 +22,40 @@ from .reproject import reproject_astrometric_image
 from .plot_astrometry_images import plot_astrometry_images
 from ..calculate_offset.align_image import prepare_images_for_offset, measure_offsets, pearson_images, align_image
 from ..calculate_offset.plot_alignment_contours import plot_offset_comparison
+from ..calculate_offset.align_image import evaluate_alignment_methods
 
 
 logger = logging.getLogger(__name__)
 
 
-def evaluate_alignment_methods(reference, moving, method="both", subtract_background=False):
-    """Measure offsets and evaluate Pearson correlation for each Numina method."""
+# def evaluate_alignment_methods(reference, moving, method="both", subtract_background=False):
+#     """Measure offsets and evaluate Pearson correlation for each Numina method."""
 
-    ref, mov, common = prepare_images_for_offset(reference, moving)
-    offsets = measure_offsets(ref, mov, method=method, subtract_background=subtract_background)
+#     ref, mov, common, _ = prepare_images_for_offset(reference, moving)
+#     offsets = measure_offsets(ref, mov, method=method, subtract_background=subtract_background)
 
-    r_original, n_original = pearson_images(reference, moving)
-    logger.info("Original | Pearson = %.5f | Valid pixels = %d", r_original, n_original)
+#     r_original, n_original = pearson_images(reference, moving)
+#     logger.info("Original | Pearson = %.5f | Valid pixels = %d", r_original, n_original)
 
-    results = {}
+#     results = {}
 
-    for name, offset in offsets.items():
-        aligned = align_image(moving, offset["dx"], offset["dy"])
-        r, n_pixels = pearson_images(reference, aligned)
+#     for name, offset in offsets.items():
+#         aligned = align_image(moving, offset["dx"], offset["dy"])
+#         r, n_pixels = pearson_images(reference, aligned)
 
-        results[name] = {
-            "dx": offset["dx"], "dy": offset["dy"],
-            "pearson": r, "n_pixels": n_pixels,
-            "aligned_image": aligned
-        }
+#         results[name] = {
+#             "dx": offset["dx"], "dy": offset["dy"],
+#             "pearson": r, "n_pixels": n_pixels,
+#             "aligned_image": aligned
+#         }
 
-        logger.info("%s | dx = %+.4f | dy = %+.4f | Pearson = %.5f | N = %d", name.upper(), offset["dx"], offset["dy"], r, n_pixels)
+#         logger.info("%s | dx = %+.4f | dy = %+.4f | Pearson = %.5f | N = %d", name.upper(), offset["dx"], offset["dy"], r, n_pixels)
 
-    return {"original_pearson": r_original, "original_pixels": n_original, "methods": results}
+#     return {"original_pearson": r_original, "original_pixels": n_original, "methods": results}
 
 
-def refine_reference_astrometry(config, reference_image, reference_wcs, method, choose_method):
+def refine_reference_astrometry(config, reference_image, reference_wcs, method, choose_method,
+                                tukey=None, rescale_to_01=True):
     """Measure the external astrometric offset of the reference cube."""
 
     astrometry = config["astrometry"]
@@ -83,8 +85,18 @@ def refine_reference_astrometry(config, reference_image, reference_wcs, method, 
         raise ValueError("Insufficient common coverage for astrometric refinement.")
 
     # External image is the moving image
+    #results = evaluate_alignment_methods(
+    #    reference_image, external_image, method=method, subtract_background=True
+    #)
+
+    # External image is the moving image
     results = evaluate_alignment_methods(
-        reference_image, external_image, method=method, subtract_background=True
+        reference_image, external_image, method=method,
+        tukey=tukey, rescale_to_01=rescale_to_01,
+        subtract_background=True,
+        cube_id=label.replace(" ", "_"), ref_id=ref_id,
+        plot_window=logger.isEnabledFor(logging.INFO),
+        show_window=logger.isEnabledFor(logging.DEBUG),
     )
 
     interactive = method == "both" and logger.isEnabledFor(logging.DEBUG)

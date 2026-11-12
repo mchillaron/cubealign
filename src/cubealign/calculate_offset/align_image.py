@@ -13,14 +13,72 @@ from scipy.ndimage import shift
 from scipy.stats import pearsonr
 
 import logging
+import matplotlib.pyplot as plt
 import numpy as np
 
+#from .calculate_offset_base import align_image
+from .plot_alignment_contours import plot_tukey_window
 
 logger = logging.getLogger(__name__)
 
 
-def prepare_images_for_offset(reference, moving):
-    """Prepare two equally shaped images for Numina cross-correlation."""
+def tukey_radial_2d(ny, nx, alpha=0.30, p=6):
+    """2D radial Tukey window using the Lp norm (from teareduce fft_fringe_correction)."""
+
+    y_lin = np.linspace(-1.0, 1.0, ny)
+    x_lin = np.linspace(-1.0, 1.0, nx)
+    Xg, Yg = np.meshgrid(x_lin, y_lin)
+    r = (np.abs(Xg) ** p + np.abs(Yg) ** p) ** (1.0 / p)
+
+    return np.where(
+        r <= (1.0 - alpha),
+        1.0,
+        np.where(
+            r <= 1.0,
+            0.5 * (1.0 + np.cos(np.pi * (r - (1.0 - alpha)) / alpha)),
+            0.0,
+        ),
+    )
+
+
+def tukey_window_from_mask(mask, alpha=0.30, p=6, footprint=True):
+    """Build a Tukey window over the full frame or over the bounding box of a valid-pixel mask."""
+
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError(f"Tukey alpha must be in (0, 1], got {alpha}.")
+    if p <= 0:
+        raise ValueError(f"Tukey p must be positive, got {p}.")
+
+    ny, nx = mask.shape
+
+    if not footprint:
+        return tukey_radial_2d(ny, nx, alpha=alpha, p=p)
+
+    rows = np.flatnonzero(mask.any(axis=1))
+    cols = np.flatnonzero(mask.any(axis=0))
+
+    if rows.size == 0 or cols.size == 0:
+        raise ValueError("Cannot build Tukey window: empty valid-pixel mask.")
+
+    y0, y1 = rows[0], rows[-1] + 1
+    x0, x1 = cols[0], cols[-1] + 1
+
+    if (y1 - y0) < 3 or (x1 - x0) < 3:
+        raise ValueError("Valid footprint too small for a Tukey window.")
+
+    window = np.zeros(mask.shape, dtype=float)
+    window[y0:y1, x0:x1] = tukey_radial_2d(y1 - y0, x1 - x0, alpha=alpha, p=p)
+
+    return window
+
+
+def prepare_images_for_offset(reference, moving, tukey=None):
+    """Prepare two equally shaped images for Numina cross-correlation.
+
+    If tukey is a dict {"alpha", "p", "footprint"}, both images are
+    background-subtracted (median of common pixels) and multiplied by the
+    same radial Tukey window.
+    """
 
     if reference.ndim != 2 or moving.ndim != 2:
         raise ValueError("Offset measurement requires two 2D images.")
@@ -36,10 +94,35 @@ def prepare_images_for_offset(reference, moving):
     ref = np.zeros(reference.shape, dtype=float)
     mov = np.zeros(moving.shape, dtype=float)
 
-    ref[common] = reference[common]
-    mov[common] = moving[common]
+    ref_vals = reference[common]
+    mov_vals = moving[common]
 
-    return ref, mov, common
+    window = None
+
+    if tukey is not None:
+        # Remove the pedestal so the taper goes to ~0 and the window shape
+        # is not imprinted identically in both images (zero-lag bias).
+        ref_vals = ref_vals - np.median(ref_vals)
+        mov_vals = mov_vals - np.median(mov_vals)
+
+    ref[common] = ref_vals
+    mov[common] = mov_vals
+
+    if tukey is not None:
+        window = tukey_window_from_mask(
+            common, alpha=tukey["alpha"], p=tukey["p"], footprint=tukey["footprint"]
+        )
+        ref *= window
+        mov *= window
+
+        n_eff = np.count_nonzero(window[common] > 0.5)
+        logger.debug("Tukey window | alpha = %.2f | p = %.1f | footprint = %s | pixels with w > 0.5: %d",
+                     tukey["alpha"], tukey["p"], tukey["footprint"], n_eff)
+
+        if n_eff < 3:
+            raise ValueError("Tukey window leaves too few effective pixels; reduce alpha.")
+
+    return ref, mov, common, window
 
 
 def measure_offsets(reference, moving, method="both", subtract_background=False, rescale_to_01=True):
@@ -66,7 +149,13 @@ def measure_offsets(reference, moving, method="both", subtract_background=False,
 
 
 def align_image(image, dx, dy, order=3):
-    """Shift an image using Numina offsets while preserving invalid regions."""
+    """Shift a 2D image using Numina offsets, preserving invalid pixels."""
+
+    if image.ndim != 2:
+        raise ValueError("align_image requires a 2D image.")
+
+    if not np.all(np.isfinite([dx, dy])):
+        raise ValueError("Alignment offsets must be finite.")
 
     finite = np.isfinite(image)
     data = np.where(finite, image, 0.0)
@@ -77,7 +166,6 @@ def align_image(image, dx, dy, order=3):
 
     aligned = np.full(image.shape, np.nan, dtype=float)
     valid = shifted_weights > 0.999
-
     aligned[valid] = shifted_data[valid] / shifted_weights[valid]
 
     return aligned
@@ -105,12 +193,31 @@ def pearson_images(image1, image2, min_pixels=10):
     return float(r), n_pixels
 
 
-def evaluate_alignment_methods(reference, moving, method="both"):
+def evaluate_alignment_methods(reference, moving, method="both", tukey=None, rescale_to_01=True,
+                               subtract_background=False,
+                               cube_id="moving", ref_id="reference",
+                               plot_window=True, show_window=False):
     """Measure offsets and evaluate the alignment quality for each method."""
 
-    ref, mov, common = prepare_images_for_offset(reference, moving)
-    offsets = measure_offsets(ref, mov, method=method)
+    ref, mov, common, window = prepare_images_for_offset(reference, moving, tukey=tukey)
 
+    # Show the Tukey window before the cross-correlation
+    if window is not None and plot_window:
+        fig = None
+        try:
+            fig = plot_tukey_window(
+                reference, moving, window, ref, mov, cube_id, ref_id, tukey,
+                show=show_window, filename=f"tukey_window_{cube_id}_vs_{ref_id}.png"
+            )
+        finally:
+            if fig is not None:
+                plt.close(fig)
+
+    offsets = measure_offsets(ref, mov, method=method, 
+                              subtract_background=subtract_background,
+                              rescale_to_01=rescale_to_01)
+
+    # Pearson is always computed on the original (unwindowed) images
     r_original, n_original = pearson_images(reference, moving)
     logger.info("Original | Pearson = %.5f | Valid pixels = %d", r_original, n_original)
 
@@ -128,6 +235,14 @@ def evaluate_alignment_methods(reference, moving, method="both"):
             "aligned_image": aligned,
         }
 
-        logger.info("%s | dx = %+.4f | dy = %+.4f | Pearson = %.5f | N = %d", name.upper(), offset["dx"], offset["dy"], r, n_pixels)
+        logger.info("%s | dx = %+.4f | dy = %+.4f | Pearson = %.5f | N = %d",
+                    name.upper(), offset["dx"], offset["dy"], r, n_pixels)
 
-    return {"original_pearson": r_original, "original_pixels": n_original, "methods": results}
+    return {
+        "original_pearson": r_original,
+        "original_pixels": n_original,
+        "methods": results,
+        "window": window,              # handy for diagnostic plots
+        "reference_used": ref,         # images actually fed to Numina
+        "moving_used": mov,
+    }

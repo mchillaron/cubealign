@@ -66,7 +66,8 @@ def align_image(image, dx, dy, order=3):
 
 
 
-def calculate_offset_base(config, images, wcs_dict, method, normalize=False, smooth_kernel=None):
+def calculate_offset_base(config, images, wcs_dict, method, normalize=False, smooth_kernel=None,
+                          tukey=None, rescale_to_01=True):
 
     # Prepare reference image and alignment results
     ref_id = config["ref_cube"]
@@ -94,7 +95,14 @@ def calculate_offset_base(config, images, wcs_dict, method, normalize=False, smo
         logger.info("=" * 55)
 
         moving_image = processed_images[cube_id]
-        results = evaluate_alignment_methods(processed_reference, moving_image, method=method)
+        
+        results = evaluate_alignment_methods(
+            processed_reference, moving_image, method=method,
+            tukey=tukey, rescale_to_01=rescale_to_01,
+            cube_id=cube_id, ref_id=ref_id,
+            plot_window=logger.isEnabledFor(logging.INFO),
+            show_window=logger.isEnabledFor(logging.DEBUG),
+        )
         alignment_results[cube_id] = results
 
         # Display comparison and select method
