@@ -41,12 +41,18 @@ ref_cube: LR_R
 tables:
   - cube_id: LR_R
     path: "data/halpha_table.fits"
+    col_names:
+      line_flux: "area_gauss"
 
   - cube_id: LR_B
     path: "data/hbeta_table.fits"
+    col_names:
+      line_flux: "area_trapz"
 
   - cube_id: LR_U
     path: "data/hdelta_table.fits"
+    col_names:
+      line_flux: "area_narrow"
 
 # FITS binary table column names
 col_names:

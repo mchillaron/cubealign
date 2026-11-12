@@ -47,6 +47,39 @@ def fits_ext(value):
     raise ConfigurationError(f"Invalid FITS extension: {value!r}")
 
 
+REQUIRED_COL_KEYS = ("x_coord", "y_coord", "line_flux")
+
+def resolve_col_names(global_cols, local_cols, description):
+    """Merge global and per-table column names; per-table values take precedence."""
+
+    if local_cols is None:
+        local_cols = {}
+
+    if not isinstance(local_cols, dict):
+        raise ConfigurationError(f"{description}: 'col_names' must be a dictionary.")
+
+    unknown = set(local_cols) - set(REQUIRED_COL_KEYS)
+    if unknown:
+        raise ConfigurationError(
+            f"{description}: unknown col_names keys {sorted(unknown)}. "
+            f"Valid keys: {list(REQUIRED_COL_KEYS)}."
+        )
+
+    merged = {**global_cols, **local_cols}
+    resolved = {}
+
+    for key in REQUIRED_COL_KEYS:
+        value = merged.get(key)
+
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigurationError(
+                f"{description}: missing or invalid column name '{key}'. "
+                "Define it in the table's 'col_names' or in the global 'col_names'."
+            )
+
+        resolved[key] = value.strip()
+
+    return resolved
 
 def load_config(path, wcs_ext, refine_astrometry=False):
     """Load and validate the YAML configuration for cube alignment."""
@@ -171,15 +204,22 @@ def load_config(path, wcs_ext, refine_astrometry=False):
 
     # Table mode
     if mode == "tables":
-        col_names = config.get("col_names")
-        required = ("x_coord", "y_coord", "line_flux")
+        # Global column names are optional defaults; each table can override them
+        global_col_names = config.get("col_names")
+        if global_col_names is None:
+            global_col_names = {}
 
-        if not isinstance(col_names, dict):
+        if not isinstance(global_col_names, dict):
             raise ConfigurationError("'col_names' must be a dictionary.")
 
-        for col in required:
-            if not isinstance(col_names.get(col), str) or not col_names[col].strip():
-                raise ConfigurationError(f"Missing or invalid column name: {col}")
+        unknown = set(global_col_names) - set(REQUIRED_COL_KEYS)
+        if unknown:
+            raise ConfigurationError(
+                f"Unknown global col_names keys {sorted(unknown)}. "
+                f"Valid keys: {list(REQUIRED_COL_KEYS)}."
+            )
+
+        config["col_names"] = global_col_names
 
         table_ids = set()
 
@@ -199,7 +239,13 @@ def load_config(path, wcs_ext, refine_astrometry=False):
             table["path"] = resolve_path(table.get("path"), root, f"Table {cube_id}")
             table["ext"] = fits_ext(table.get("ext", 1))
 
-            verify_fits(table["path"], table["ext"], f"Table {cube_id}", table=True, columns=col_names)
+            # Per-table column names (fallback to global defaults)
+            table["col_names"] = resolve_col_names(
+                global_col_names, table.get("col_names"), f"Table {cube_id}"
+            )
+
+            verify_fits(table["path"], table["ext"], f"Table {cube_id}",
+                        table=True, columns=table["col_names"])
 
         if table_ids != cube_ids:
             raise ConfigurationError(f"Missing tables for cubes: {sorted(cube_ids - table_ids)}")
