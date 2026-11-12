@@ -208,3 +208,92 @@ def plot_final_alignment_old(images, aligned_images, cube_info, ref_id, cmap="ma
 
     output_figure(fig, "final_alignment_contours.png")
 
+
+def _display_limits(data, lo=1.0, hi=99.0):
+    """Robust display limits from finite values."""
+
+    finite = np.asarray(data)[np.isfinite(data)]
+
+    if finite.size == 0:
+        return None, None
+
+    vmin, vmax = np.percentile(finite, [lo, hi])
+
+    if vmin == vmax:
+        vmax = vmin + 1.0
+
+    return vmin, vmax
+
+
+def _draw_window_contours(ax, window):
+    """Draw the flat-top edge (solid) and half-weight level (dashed) of the window."""
+
+    styles = {0.5: "--", 0.999: "-"}
+    levels = [lvl for lvl in (0.5, 0.999) if window.min() < lvl < window.max()]
+
+    if levels:
+        ax.contour(window, levels=levels, colors="white", linewidths=1.0,
+                   linestyles=[styles[lvl] for lvl in levels])
+
+
+def plot_tukey_window(reference, moving, window, ref_used, mov_used,
+                      cube_id, ref_id, tukey, cmap="plasma",
+                      show=False, filename=None):
+    """Show the Tukey window over the alignment images before cross-correlation.
+
+    Top row: alignment images with the attenuation (1 - window) overlaid in black.
+    Bottom row: background-subtracted, windowed images passed to Numina.
+    """
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 9), constrained_layout=True)
+
+    # Black overlay: transparent where window = 1, opaque black where window = 0
+    overlay = np.zeros(window.shape + (4,), dtype=float)
+    overlay[..., 3] = 1.0 - window
+
+    top_panels = [(reference, ref_id, "reference"), (moving, cube_id, "moving")]
+
+    for ax, (image, name, role) in zip(axes[0], top_panels):
+        vmin, vmax = _display_limits(image)
+        ax.set_facecolor("0.8")  # NaN pixels in light grey
+        im = ax.imshow(image, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax,
+                       interpolation="nearest")
+        ax.imshow(overlay, origin="lower", interpolation="nearest")
+        _draw_window_contours(ax, window)
+        ax.set_title(f"{name} ({role}) + Tukey window")
+        fig.colorbar(im, ax=ax, shrink=0.8)
+
+    inside = window > 0
+    bottom_panels = [(ref_used, ref_id), (mov_used, cube_id)]
+
+    for ax, (image, name) in zip(axes[1], bottom_panels):
+        display = np.where(inside, image, np.nan)
+        vmin, vmax = _display_limits(display)
+        ax.set_facecolor("black")  # zero-weight pixels in black
+        im = ax.imshow(display, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax,
+                       interpolation="nearest")
+        _draw_window_contours(ax, window)
+        ax.set_title(f"{name}: input to Numina")
+        fig.colorbar(im, ax=ax, shrink=0.8)
+
+    for ax in axes.flat:
+        ax.set_xlabel("X [pix]")
+        ax.set_ylabel("Y [pix]")
+
+    frac_half = np.count_nonzero(window > 0.5) / window.size
+    fig.suptitle(
+        f"Tukey window | alpha = {tukey['alpha']:.2f} | p = {tukey['p']:.1f} | "
+        f"{'footprint' if tukey['footprint'] else 'full frame'} | "
+        f"w > 0.5: {100 * frac_half:.1f}% of frame\n"
+        "solid: flat-top edge (w = 0.999)   dashed: w = 0.5"
+    )
+
+    if filename is not None:
+        fig.savefig(filename, dpi=150)
+        logger.info("Tukey window plot saved: %s", filename)
+
+    if show:
+        plt.show()
+
+    return fig
+
