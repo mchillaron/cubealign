@@ -38,12 +38,10 @@ class ConfigurationError(ValueError):
     """Exception raised when the alignment configuration is invalid."""
     pass
 
-def measure_cube_alignment(config, method, 
-                            refine_astrometry,
-                            choose_method,
-                            history_line_command, 
-                            time_start, normalize=False, smooth_kernel=None, 
-                            slice_offset=False, slice_npoints=20, slice_method=1):
+def measure_cube_alignment(config, method, refine_astrometry, choose_method,
+                           history_line_command, time_start, normalize=False, smooth_kernel=None,
+                           slice_offset=False, slice_npoints=20, slice_method=1,
+                           tukey=None, rescale_to_01=True):
     
     """Measure relative spatial alignment of IFU datacubes."""
 
@@ -93,15 +91,16 @@ def measure_cube_alignment(config, method,
     elif config["mode"] == "tables":
         logger.info("Generating fitted emission-line maps from FITS tables.")
 
-        col_names = config["col_names"]
         fits_coordinates = config["fits_coordinates"]
 
         for table_info in config["tables"]:
             cube_id = table_info["cube_id"]
             filename = table_info["path"]
             table_ext = table_info["ext"]
+            col_names = table_info["col_names"]
 
             logger.info("Processing fitted-line table: %s", cube_id)
+            logger.info("%s | Columns: x = %s | y = %s | flux = %s", cube_id, col_names["x_coord"], col_names["y_coord"], col_names["line_flux"])
 
             table = read_line_table(filename, table_ext, cube_id)
             tables[cube_id] = table
@@ -138,9 +137,9 @@ def measure_cube_alignment(config, method,
 
     # Offsets measurements
     logger.info("Relative cube alignment starts") 
-    #reference_image, reference_wcs, alignment_results, offsets, aligned_images = calculate_offset_base(config, images, wcs_dict, method)
     reference_image, reference_wcs, alignment_results, offsets, aligned_images = calculate_offset_base(
-        config, images, wcs_dict, method, normalize=normalize, smooth_kernel=smooth_kernel
+        config, images, wcs_dict, method, normalize=normalize, smooth_kernel=smooth_kernel,
+        tukey=tukey, rescale_to_01=rescale_to_01
     )
     logger.info("Relative cube alignment completed.")
 
@@ -150,7 +149,11 @@ def measure_cube_alignment(config, method,
     if refine_astrometry:
         logger.info("External astrometric refinement starts.")
 
-        astrometry_result = refine_reference_astrometry(config, reference_image, reference_wcs, method, choose_method)
+        #astrometry_result = refine_reference_astrometry(config, reference_image, reference_wcs, method, choose_method)
+        astrometry_result = refine_reference_astrometry(
+            config, reference_image, reference_wcs, method, choose_method,
+            tukey=tukey, rescale_to_01=rescale_to_01
+        )
         plot_final_astrometry(reference_image, astrometry_result, config["ref_cube"],label=config["astrometry"].get("label", "External image"))
         logger.info("External astrometric refinement completed.")
 
@@ -208,6 +211,16 @@ def main():
     parser.add_argument("--slice-offset", action="store_true", help="Diagnose wavelength-dependent spatial offsets within each input cube.")
     parser.add_argument("--slice-npoints", type=int, default=10, help="Number of spectral sampling points for the Numina slice-offset diagnostic.")
     parser.add_argument("--slice-method", type=int, choices=[1, 2], default=1, help="Numina slice-offset diagnostic method: 1=skimage, 2=scipy.")
+    parser.add_argument("--tukey", action="store_true",
+                        help="Apply a 2D radial Tukey window to the alignment images before cross-correlation.")
+    parser.add_argument("--tukey-alpha", type=float, default=0.30,
+                        help="Fraction of the normalised radius over which the Tukey cosine taper acts (0 < alpha <= 1).")
+    parser.add_argument("--tukey-p", type=float, default=6.0,
+                        help="Lp-norm order of the Tukey window (2 = circular, larger = more square).")
+    parser.add_argument("--tukey-full-frame", action="store_true",
+                        help="Build the Tukey window over the full frame instead of the common valid footprint.")
+    parser.add_argument("--no-rescale", action="store_true",
+                        help="Pass rescale_to_01=False to Numina.")
     parser.add_argument("--log-level", type=str.upper, choices=["DEBUG","INFO","WARNING","ERROR","CRITICAL",],default="INFO",help="Logging verbosity level.",)
 
     args = parser.parse_args()
@@ -250,6 +263,16 @@ def main():
     if args.slice_npoints < 2:
         parser.error("--slice-npoints must be at least 2.")
 
+    # protections for tukey window parameters
+    if args.tukey:
+        if not (np.isfinite(args.tukey_alpha) and 0.0 < args.tukey_alpha <= 1.0):
+            parser.error("--tukey-alpha must be in (0, 1].")
+        if not (np.isfinite(args.tukey_p) and args.tukey_p > 0):
+            parser.error("--tukey-p must be a finite positive number.")
+
+    tukey = ({"alpha": args.tukey_alpha, "p": args.tukey_p, "footprint": not args.tukey_full_frame}
+            if args.tukey else None)
+
     # Load and validate configuration
     try:
         config = load_config(args.config, fits_ext(args.wcs_ext), args.refine_astrometry,)
@@ -260,6 +283,7 @@ def main():
         logger.info("Alignment mode: %s", config["mode"],)
         logger.info("Alignment method: %s", args.method,)
         logger.info("External astrometric refinement: %s", args.refine_astrometry,)
+        logger.info("Tukey window: %s", tukey if tukey else "disabled")
 
     
         # Run cube alignment
@@ -269,7 +293,8 @@ def main():
                                choose_method=(choose_method if args.method == "both" else None),
                                history_line_command=history_line_command, time_start=start,
                                normalize=args.normalize, smooth_kernel=args.smooth_kernel,
-                               slice_offset=args.slice_offset, slice_npoints=args.slice_npoints, slice_method=args.slice_method)
+                               slice_offset=args.slice_offset, slice_npoints=args.slice_npoints, slice_method=args.slice_method,
+                               tukey=tukey, rescale_to_01=not args.no_rescale)
 
         logger.info("Cube alignment completed successfully.")
         return 0
