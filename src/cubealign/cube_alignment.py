@@ -26,6 +26,7 @@ from .cube_table_to_image.read_tables import read_line_table, inspect_table_coor
 from .cube_table_to_image.collapse_cube import collapse_emission_line, plot_collapsed_images
 from .cube_table_to_image.plot_line_images import plot_alignment_images
 from .calculate_offset.calculate_offset_base import calculate_offset_base
+from .calculate_offset.plot_alignment_contours import close_figures
 from .check_astrometry.check_astrometry_base import refine_reference_astrometry
 from .check_astrometry.plot_astrometry_images import plot_final_astrometry
 from .save_cubes.save_alignment_results import save_alignment_results
@@ -309,6 +310,7 @@ def main():
         return 1
 
     except KeyboardInterrupt:
+        close_figures()   # closes the comparison window and anything else still open
         logger.warning("Execution interrupted by the user.")
         return 130
 

@@ -20,39 +20,11 @@ import numpy as np
 
 from .reproject import reproject_astrometric_image
 from .plot_astrometry_images import plot_astrometry_images
-from ..calculate_offset.align_image import prepare_images_for_offset, measure_offsets, pearson_images, align_image
-from ..calculate_offset.plot_alignment_contours import plot_offset_comparison
+from ..calculate_offset.plot_alignment_contours import plot_offset_comparison, close_figures
 from ..calculate_offset.align_image import evaluate_alignment_methods
 
 
 logger = logging.getLogger(__name__)
-
-
-# def evaluate_alignment_methods(reference, moving, method="both", subtract_background=False):
-#     """Measure offsets and evaluate Pearson correlation for each Numina method."""
-
-#     ref, mov, common, _ = prepare_images_for_offset(reference, moving)
-#     offsets = measure_offsets(ref, mov, method=method, subtract_background=subtract_background)
-
-#     r_original, n_original = pearson_images(reference, moving)
-#     logger.info("Original | Pearson = %.5f | Valid pixels = %d", r_original, n_original)
-
-#     results = {}
-
-#     for name, offset in offsets.items():
-#         aligned = align_image(moving, offset["dx"], offset["dy"])
-#         r, n_pixels = pearson_images(reference, aligned)
-
-#         results[name] = {
-#             "dx": offset["dx"], "dy": offset["dy"],
-#             "pearson": r, "n_pixels": n_pixels,
-#             "aligned_image": aligned
-#         }
-
-#         logger.info("%s | dx = %+.4f | dy = %+.4f | Pearson = %.5f | N = %d", name.upper(), offset["dx"], offset["dy"], r, n_pixels)
-
-#     return {"original_pearson": r_original, "original_pixels": n_original, "methods": results}
-
 
 def refine_reference_astrometry(config, reference_image, reference_wcs, method, choose_method,
                                 tukey=None, rescale_to_01=True):
@@ -112,8 +84,9 @@ def refine_reference_astrometry(config, reference_image, reference_wcs, method, 
         selected_method = choose_method(results, interactive=interactive) if method == "both" else method
 
     finally:
-        if fig is not None:
-            plt.close(fig)
+        close_figures()   # closes the comparison window and anything else still open
+        #if fig is not None:
+        #    plt.close(fig)
 
     selected = results["methods"][selected_method]
 

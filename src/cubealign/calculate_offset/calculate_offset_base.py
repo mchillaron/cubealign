@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from ..initial_functions import choose_method
-from .plot_alignment_contours import plot_offset_comparison, plot_final_alignment
+from .plot_alignment_contours import plot_offset_comparison, plot_final_alignment, close_figures
 from .align_image import evaluate_alignment_methods
 from .normalize import normalize_alignment_image
 from .smoothing import smooth_alignment_image
@@ -122,8 +122,9 @@ def calculate_offset_base(config, images, wcs_dict, method, normalize=False, smo
                 selected_method = method
 
         finally:
-            if fig is not None:
-                plt.close(fig)
+            close_figures()   # closes the comparison window and anything else still open
+            #if fig is not None:
+            #    plt.close(fig)
 
         selected = results["methods"][selected_method]
 

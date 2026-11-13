@@ -11,16 +11,17 @@ from matplotlib.lines import Line2D
 from matplotlib import patheffects
 from numina.tools.measure_xy_offset_2dimages import measure_xy_offset_2dimages
 from pathlib import Path
+from rich.console import Console
 
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import re
 
-
 from ..cube_table_to_image.plot_line_images import add_top_colorbar, output_figure
 
 logger = logging.getLogger(__name__)
+console = Console()
 
 def get_contour_levels(image, percentiles=(70, 80, 90, 95)):
     """Calculate positive intensity contour levels."""
@@ -34,6 +35,24 @@ def get_contour_levels(image, percentiles=(70, 80, 90, 95)):
     return levels if len(levels) > 0 else np.array([])
 
 
+def close_figures(fig=None):
+    """Close one figure (or all open figures) and let the GUI remove the windows.
+
+    plt.close() alone may leave a frozen window on screen until Matplotlib
+    processes GUI events again; flushing the canvas events removes it now.
+    """
+
+    figures = [fig] if fig is not None else [plt.figure(num) for num in plt.get_fignums()]
+
+    for figure in figures:
+        canvas = figure.canvas
+        plt.close(figure)
+
+        try:
+            canvas.flush_events()
+        except Exception:
+            # Some backends (or an already destroyed widget) cannot flush; harmless
+            pass
 
 
 def plot_offset_comparison(reference, moving, results, cube_id, ref_id, pmin=1.0, pmax=99.5, cmap="plasma", show=False):
@@ -292,8 +311,12 @@ def plot_tukey_window(reference, moving, window, ref_used, mov_used,
         fig.savefig(filename, dpi=150)
         logger.info("Tukey window plot saved: %s", filename)
 
+    #if show:
+    #    plt.show()
+
     if show:
-        plt.show()
+        plt.show(block=False)
+        plt.pause(0.3)
+        console.input("[bold]Tukey window shown. Press Enter to continue...[/bold]")
 
     return fig
-
